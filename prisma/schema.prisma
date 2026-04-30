@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AppointmentStatus {
+  BOOKED
+  CANCELED
+}
+
+model User {
+  id           Int           @id @default(autoincrement())
+  telegramId   BigInt        @unique
+  username     String?
+  firstName    String?
+  appointments Appointment[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model Master {
+  id            Int            @id @default(autoincrement())
+  name          String
+  telegramChatId BigInt?
+  services      Service[]
+  appointments  Appointment[]
+  workingHours  WorkingHour[]
+  blockedSlots  BlockedSlot[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model Service {
+  id                 Int           @id @default(autoincrement())
+  name               String
+  durationMinutes    Int
+  price              Decimal?      @db.Decimal(10, 2)
+  isActive           Boolean       @default(true)
+  masterId           Int
+  master             Master        @relation(fields: [masterId], references: [id], onDelete: Cascade)
+  appointments       Appointment[]
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+}
+
+model Appointment {
+  id             Int                @id @default(autoincrement())
+  userId         Int
+  masterId       Int
+  serviceId      Int
+  startsAt       DateTime
+  endsAt         DateTime
+  status         AppointmentStatus  @default(BOOKED)
+  customerName   String?
+  customerPhone  String?
+  notes          String?
+  canceledAt     DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  master         Master             @relation(fields: [masterId], references: [id], onDelete: Restrict)
+  service        Service            @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+  @@index([masterId, startsAt, endsAt, status])
+  @@index([userId, startsAt])
+}
+
+model WorkingHour {
+  id         Int      @id @default(autoincrement())
+  masterId   Int
+  weekday    Int
+  startTime  String
+  endTime    String
+  isActive   Boolean  @default(true)
+  master     Master   @relation(fields: [masterId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([masterId, weekday])
+}
+
+model BlockedSlot {
+  id         Int      @id @default(autoincrement())
+  masterId   Int
+  startsAt   DateTime
+  endsAt     DateTime
+  reason     String?
+  master     Master   @relation(fields: [masterId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([masterId, startsAt, endsAt])
+}
