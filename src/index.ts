@@ -63,12 +63,65 @@ function formatDateTime(date: Date): string {
   }).format(date);
 }
 
+function getDateParts(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  return {
+    year: Number(parts.find((part) => part.type === "year")?.value),
+    month: Number(parts.find((part) => part.type === "month")?.value),
+    day: Number(parts.find((part) => part.type === "day")?.value),
+  };
+}
+
 function toDateKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const { year, month, day } = getDateParts(date, botTimeZone);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function getTimeZoneOffsetMinutes(date: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  const day = Number(parts.find((part) => part.type === "day")?.value);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  const second = Number(parts.find((part) => part.type === "second")?.value);
+
+  const asUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+  return (asUtc - date.getTime()) / 60_000;
+}
+
+function zonedDateTimeToUtc(dateKey: string, time: string): Date {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const [hours, minutes] = time.split(":").map(Number);
+  const utcGuess = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0));
+  const offset = getTimeZoneOffsetMinutes(utcGuess, botTimeZone);
+  return new Date(utcGuess.getTime() - offset * 60_000);
 }
 
 function startOfDayUtc(dateKey: string): Date {
-  return new Date(`${dateKey}T00:00:00.000Z`);
+  return zonedDateTimeToUtc(dateKey, "00:00");
+}
+
+function addDaysToDateKey(dateKey: string, days: number): string {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return toDateKey(date);
 }
 
 function addMinutes(date: Date, minutes: number): Date {
@@ -85,9 +138,8 @@ function parseTimeToMinutes(value: string): number {
   return hours * 60 + minutes;
 }
 
-function buildSlotDate(day: Date, time: string): Date {
-  const minutes = parseTimeToMinutes(time);
-  return addMinutes(day, minutes);
+function buildSlotDate(dateKey: string, time: string): Date {
+  return zonedDateTimeToUtc(dateKey, time);
 }
 
 function intersects(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
@@ -172,8 +224,8 @@ async function getAvailableSlots(serviceId: number, dateKey: string): Promise<Sl
   }
 
   const slots: Slot[] = [];
-  const windowStart = buildSlotDate(dayStart, workingHour.startTime);
-  const windowEnd = buildSlotDate(dayStart, workingHour.endTime);
+  const windowStart = buildSlotDate(dateKey, workingHour.startTime);
+  const windowEnd = buildSlotDate(dateKey, workingHour.endTime);
 
   for (
     let current = new Date(windowStart);
@@ -237,10 +289,11 @@ async function renderDatesMenu(ctx: AppContext, serviceId: number) {
 
   const keyboard = new InlineKeyboard();
   let hasDates = false;
+  const todayDateKey = toDateKey(new Date());
 
   for (let offset = 0; offset < DAYS_TO_SHOW; offset += 1) {
-    const date = addMinutes(startOfDayUtc(toDateKey(new Date())), offset * 24 * 60);
-    const dateKey = toDateKey(date);
+    const dateKey = addDaysToDateKey(todayDateKey, offset);
+    const date = startOfDayUtc(dateKey);
     const slots = await getAvailableSlots(serviceId, dateKey);
 
     if (slots.length > 0) {
@@ -288,15 +341,22 @@ async function renderSlotsMenu(ctx: AppContext, serviceId: number, dateKey: stri
     return;
   }
 
-  for (const slot of slots) {
+  const buttonsPerRow = slots.length <= 3 ? 1 : slots.length <= 8 ? 2 : 3;
+
+  slots.forEach((slot, index) => {
     const time = new Intl.DateTimeFormat("ru-RU", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
       timeZone: botTimeZone,
     }).format(slot.startsAt);
+
     keyboard.text(time, `${CALLBACK.confirm}:${serviceId}:${slot.startsAt.toISOString()}`);
-  }
+
+    if ((index + 1) % buttonsPerRow === 0 && index < slots.length - 1) {
+      keyboard.row();
+    }
+  });
 
   keyboard.row();
   keyboard.text("Выбрать другую дату", `${CALLBACK.service}:${serviceId}`);
